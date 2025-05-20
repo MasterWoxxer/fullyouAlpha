@@ -12,29 +12,45 @@ interface RatingAxis {
   bottomLabel?: string;
 }
 
+interface RatingPoint {
+  x: number;
+  y: number;
+  color?: string;
+}
+
 interface WoxxerFanRatingProps {
   question: string;
   xAxis: RatingAxis;
   yAxis: RatingAxis;
-  onSubmitRating?: (rating: { x: number; y: number }) => void;
+  onSubmitRatings?: (ratings: RatingPoint[]) => void;
   showOtherRatings?: boolean;
-  otherRatings?: { x: number; y: number; user?: string }[];
+  otherRatings?: RatingPoint[];
+  maxRatings?: number; // Maximum number of rating points allowed
 }
 
 const WoxxerFanRating: React.FC<WoxxerFanRatingProps> = ({
   question,
   xAxis,
   yAxis,
-  onSubmitRating,
+  onSubmitRatings,
   showOtherRatings = false,
   otherRatings = [],
+  maxRatings = 3, // Default to 3 ratings as mentioned
 }) => {
-  const [rating, setRating] = useState<{ x: number; y: number } | null>(null);
+  const [ratings, setRatings] = useState<RatingPoint[]>([]);
+  const [activeRatingIndex, setActiveRatingIndex] = useState<number>(-1);
   const [submitted, setSubmitted] = useState(false);
   const [viewMode, setViewMode] = useState<'own' | 'others' | 'aggregate'>('own');
   const containerRef = useRef<HTMLDivElement>(null);
   
-  // When user clicks on the grid to set their rating
+  // Colors for the different rating points
+  const ratingColors = [
+    '#BE185D', // Pink
+    '#3B82F6', // Blue
+    '#10B981', // Green
+  ];
+  
+  // When user clicks on the grid to add or move a rating
   const handleGridClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (submitted) return;
     
@@ -45,12 +61,49 @@ const WoxxerFanRating: React.FC<WoxxerFanRatingProps> = ({
     // Invert Y coordinate since 0 is at the top in DOM but we want it at the bottom
     const invertedY = 100 - y;
     
-    setRating({ x, y: invertedY });
+    // If we're already at the max number of ratings, replace the oldest one
+    // unless we're in edit mode (activeRatingIndex >= 0)
+    if (activeRatingIndex >= 0) {
+      // Update the active rating
+      const updatedRatings = [...ratings];
+      updatedRatings[activeRatingIndex] = { 
+        ...updatedRatings[activeRatingIndex],
+        x, 
+        y: invertedY 
+      };
+      setRatings(updatedRatings);
+      setActiveRatingIndex(-1); // Exit edit mode
+    } else {
+      // Add a new rating
+      if (ratings.length >= maxRatings) {
+        // Replace oldest rating (shift and add new one)
+        const updatedRatings = [...ratings.slice(1), {
+          x, 
+          y: invertedY,
+          color: ratingColors[ratings.length % ratingColors.length]
+        }];
+        setRatings(updatedRatings);
+      } else {
+        // Add a new rating
+        setRatings([...ratings, {
+          x,
+          y: invertedY,
+          color: ratingColors[ratings.length % ratingColors.length]
+        }]);
+      }
+    }
+  };
+  
+  // Start editing an existing rating point
+  const startEditRating = (index: number) => {
+    if (!submitted) {
+      setActiveRatingIndex(index);
+    }
   };
   
   const handleSubmit = () => {
-    if (rating && onSubmitRating) {
-      onSubmitRating(rating);
+    if (ratings.length > 0 && onSubmitRatings) {
+      onSubmitRatings(ratings);
       setSubmitted(true);
     }
   };
@@ -98,7 +151,14 @@ const WoxxerFanRating: React.FC<WoxxerFanRatingProps> = ({
     const fanCount = 30; // More lines for precision in 50-100 range
     
     // Function to create a fan line with finger-width
-    const createFanLine = (startX, startY, endX, endY, index, quadrant) => {
+    const createFanLine = (
+      startX: number, 
+      startY: number, 
+      endX: number, 
+      endY: number, 
+      index: number, 
+      quadrant: string
+    ) => {
       // Calculate width based on position to create finger-wide lines
       const width = 3 + (index / fanCount) * 3;
       const opacity = 0.1 + (index / fanCount) * 0.5;
@@ -145,22 +205,26 @@ const WoxxerFanRating: React.FC<WoxxerFanRatingProps> = ({
     return paths;
   };
   
-  const renderRatingMarker = (x: number, y: number, color = '#BE185D', size = 16) => {
+  const renderRatingMarker = (point: RatingPoint, index: number, isActive: boolean = false) => {
     // Invert Y coordinate for display (0 is at the top in DOM)
-    const displayY = 100 - y;
+    const displayY = 100 - point.y;
+    const size = isActive ? 20 : 16;
     
     return (
       <div 
-        className="absolute rounded-full border-2 border-white shadow-md" 
+        key={`rating-point-${index}`}
+        className={`absolute rounded-full border-2 border-white shadow-md transition-all duration-200 ${isActive ? 'ring-2 ring-blue-500' : ''}`}
         style={{
-          left: `${x}%`,
+          left: `${point.x}%`,
           top: `${displayY}%`,
           width: `${size}px`,
           height: `${size}px`,
-          backgroundColor: color,
+          backgroundColor: point.color || '#BE185D',
           transform: 'translate(-50%, -50%)',
           zIndex: 10,
+          cursor: submitted ? 'default' : 'pointer'
         }}
+        onClick={() => !submitted && startEditRating(index)}
       />
     );
   };
@@ -238,26 +302,47 @@ const WoxxerFanRating: React.FC<WoxxerFanRatingProps> = ({
                 <span>{yAxis.leftLabel}</span>
               </div>
               
-              {/* Display rating markers based on view mode */}
-              {viewMode === 'own' && rating && renderRatingMarker(rating.x, rating.y)}
+              {/* Display rating markers */}
+              {viewMode === 'own' && ratings.map((point, i) => 
+                renderRatingMarker(point, i, i === activeRatingIndex)
+              )}
               
-              {viewMode === 'others' && otherRatings.map((r, i) => (
-                renderRatingMarker(r.x, r.y, `hsl(${(i * 30) % 360}, 70%, 60%)`)
+              {viewMode === 'others' && otherRatings.map((point, i) => (
+                renderRatingMarker({
+                  ...point, 
+                  color: `hsl(${(i * 30) % 360}, 70%, 60%)`
+                }, i + 100) // Add offset to ensure unique keys
               ))}
+              
+              {/* Rating Counter */}
+              {!submitted && (
+                <div className="absolute top-4 right-4 bg-white dark:bg-gray-800 rounded-full px-3 py-1 text-sm font-medium shadow-md">
+                  {ratings.length} / {maxRatings}
+                </div>
+              )}
             </div>
           </div>
           
-          {!submitted && (
-            <div className="mt-6 flex justify-center">
-              <Button 
-                onClick={handleSubmit}
-                disabled={!rating}
-                className="px-8"
-              >
-                Submit Rating
-              </Button>
-            </div>
-          )}
+          <div className="mt-6 flex justify-center items-center space-x-4">
+            {!submitted && (
+              <>
+                <div className="text-sm text-gray-500">
+                  {ratings.length === 0 
+                    ? 'Click to add rating points (up to 3)' 
+                    : ratings.length < maxRatings 
+                      ? `Click to add ${maxRatings - ratings.length} more rating points` 
+                      : 'Click on a point to edit its position'}
+                </div>
+                <Button 
+                  onClick={handleSubmit}
+                  disabled={ratings.length === 0}
+                  className="px-8"
+                >
+                  Submit Ratings
+                </Button>
+              </>
+            )}
+          </div>
         </CardContent>
       </Card>
     </div>
