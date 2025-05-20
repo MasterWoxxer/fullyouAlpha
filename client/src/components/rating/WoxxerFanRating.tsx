@@ -284,6 +284,13 @@ const WoxxerFanRating: React.FC<WoxxerFanRatingProps> = ({
                 {renderFanLines()}
               </svg>
               
+              {/* Object to be rated in the center */}
+              <div className="absolute left-1/4 right-1/4 top-1/3 bottom-1/3 flex items-center justify-center">
+                <div className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow-lg text-center border-2 border-gray-300 dark:border-gray-600 max-w-xs">
+                  <p className="text-sm font-medium">{question}</p>
+                </div>
+              </div>
+              
               {/* X-axis labels */}
               <div className="absolute bottom-0 left-0 right-0 flex justify-between px-4 pb-2 text-sm font-medium text-gray-600 dark:text-gray-400">
                 <span>{xAxis.leftLabel}</span>
