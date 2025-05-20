@@ -55,120 +55,94 @@ const WoxxerFanRating: React.FC<WoxxerFanRatingProps> = ({
     }
   };
   
-  // Draw fan lines for axes that more closely match the reference design
+  // Render fan lines exactly like the earlier versions with finger-wide lines for precise rating
   const renderFanLines = () => {
-    const lineCount = 12; // Fewer, thicker lines
-    const lines = [];
+    // We'll use paths instead of lines to create finger-wide fan segments
+    const paths = [];
     
-    // Top left to bottom right (growing to shrinking market)
-    for (let i = 0; i <= lineCount; i++) {
-      // Spacing increases towards the edges
-      const xOffset = (i / lineCount) * 100;
+    // Create grid lines first (very light)
+    const gridLineCount = 5; // 5x5 grid (subtle background)
+    for (let i = 1; i < gridLineCount; i++) {
+      const position = (i / gridLineCount) * 100;
       
-      lines.push(
+      // Vertical grid lines
+      paths.push(
         <line 
-          key={`x-line-${i}`} 
-          x1={`${xOffset}%`} 
-          y1="0%" 
-          x2={`${xOffset}%`} 
-          y2="100%" 
-          stroke="#888" 
-          strokeWidth="1" 
-          strokeOpacity={0.4}
+          key={`grid-v-${i}`}
+          x1={`${position}%`}
+          y1="0%"
+          x2={`${position}%`}
+          y2="100%"
+          stroke="#ddd"
+          strokeWidth="1"
+          strokeOpacity="0.3"
         />
       );
-    }
-    
-    // Top to bottom (blue ocean to crowded space)
-    for (let i = 0; i <= lineCount; i++) {
-      const yOffset = (i / lineCount) * 100;
       
-      lines.push(
+      // Horizontal grid lines
+      paths.push(
         <line 
-          key={`y-line-${i}`} 
-          x1="0%" 
-          y1={`${yOffset}%`} 
-          x2="100%" 
-          y2={`${yOffset}%`} 
-          stroke="#888" 
-          strokeWidth="1" 
-          strokeOpacity={0.4}
+          key={`grid-h-${i}`}
+          x1="0%"
+          y1={`${position}%`}
+          x2="100%"
+          y2={`${position}%`}
+          stroke="#ddd"
+          strokeWidth="1"
+          strokeOpacity="0.3"
         />
       );
     }
     
-    // Add thicker, fatter fan lines resembling your design (diagonal)
-    const fanLineCount = 12;
+    // Create fan lines spreading from each edge
+    const fanCount = 30; // More lines for precision in 50-100 range
     
-    // Top-Left corner fans (Blue Ocean, Growing Market)
-    for (let i = 1; i <= fanLineCount; i++) {
-      const percentage = (i / fanLineCount) * 30;
-      lines.push(
-        <line 
-          key={`fan-tl-${i}`} 
-          x1="0%" 
-          y1={`${percentage}%`} 
-          x2={`${percentage}%`} 
-          y2="0%" 
-          stroke="#444" 
-          strokeWidth="1.5" 
-          strokeOpacity={0.7}
+    // Function to create a fan line with finger-width
+    const createFanLine = (startX, startY, endX, endY, index, quadrant) => {
+      // Calculate width based on position to create finger-wide lines
+      const width = 3 + (index / fanCount) * 3;
+      const opacity = 0.1 + (index / fanCount) * 0.5;
+      
+      return (
+        <line
+          key={`fan-${quadrant}-${index}`}
+          x1={`${startX}%`}
+          y1={`${startY}%`}
+          x2={`${endX}%`}
+          y2={`${endY}%`}
+          stroke="#666"
+          strokeWidth={width}
+          strokeOpacity={opacity}
+          strokeLinecap="round"
         />
       );
+    };
+    
+    // Left edge fans (horizontal)
+    for (let i = 0; i <= fanCount; i++) {
+      const yPos = (i / fanCount) * 100;
+      paths.push(createFanLine(0, yPos, 50, 50, i, 'left'));
     }
     
-    // Bottom-Left corner fans (Crowded Space, Growing Market)
-    for (let i = 1; i <= fanLineCount; i++) {
-      const percentage = (i / fanLineCount) * 30;
-      lines.push(
-        <line 
-          key={`fan-bl-${i}`} 
-          x1="0%" 
-          y1={`${100 - percentage}%`} 
-          x2={`${percentage}%`} 
-          y2="100%" 
-          stroke="#444" 
-          strokeWidth="1.5" 
-          strokeOpacity={0.7}
-        />
-      );
+    // Right edge fans (horizontal)
+    for (let i = 0; i <= fanCount; i++) {
+      const yPos = (i / fanCount) * 100;
+      paths.push(createFanLine(100, yPos, 50, 50, i, 'right'));
     }
     
-    // Top-Right corner fans (Blue Ocean, Shrinking Market)
-    for (let i = 1; i <= fanLineCount; i++) {
-      const percentage = (i / fanLineCount) * 30;
-      lines.push(
-        <line 
-          key={`fan-tr-${i}`} 
-          x1="100%" 
-          y1={`${percentage}%`} 
-          x2={`${100 - percentage}%`} 
-          y2="0%" 
-          stroke="#444" 
-          strokeWidth="1.5" 
-          strokeOpacity={0.7}
-        />
-      );
+    // Top edge fans (vertical)
+    for (let i = 0; i <= fanCount; i++) {
+      const xPos = (i / fanCount) * 100;
+      paths.push(createFanLine(xPos, 0, 50, 50, i, 'top'));
     }
     
-    // Bottom-Right corner fans (Crowded Space, Shrinking Market)
-    for (let i = 1; i <= fanLineCount; i++) {
-      const percentage = (i / fanLineCount) * 30;
-      lines.push(
-        <line 
-          key={`fan-br-${i}`} 
-          x1="100%" 
-          y1={`${100 - percentage}%`} 
-          x2={`${100 - percentage}%`} 
-          y2="100%" 
-          stroke="#444" 
-          strokeWidth="1.5" 
-          strokeOpacity={0.7}
-        />
-      );
+    // Bottom edge fans (vertical)
+    for (let i = 0; i <= fanCount; i++) {
+      const xPos = (i / fanCount) * 100;
+      paths.push(createFanLine(xPos, 100, 50, 50, i, 'bottom'));
     }
     
-    return lines;
+    return paths;
   };
   
   const renderRatingMarker = (x: number, y: number, color = '#BE185D', size = 16) => {
