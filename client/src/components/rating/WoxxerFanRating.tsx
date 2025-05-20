@@ -20,9 +20,16 @@ interface RatingPoint {
 
 interface WoxxerFanRatingProps {
   question: string;
+  objectBeingRated?: {
+    id: string;
+    type: string;
+    title: string;
+    description?: string;
+    imageUrl?: string;
+  };
   xAxis: RatingAxis;
   yAxis: RatingAxis;
-  onSubmitRatings?: (ratings: RatingPoint[]) => void;
+  onSubmitRatings?: (ratings: RatingPoint[], objectId: string) => void;
   showOtherRatings?: boolean;
   otherRatings?: RatingPoint[];
   maxRatings?: number; // Maximum number of rating points allowed
@@ -30,6 +37,12 @@ interface WoxxerFanRatingProps {
 
 const WoxxerFanRating: React.FC<WoxxerFanRatingProps> = ({
   question,
+  objectBeingRated = {
+    id: "company-1",
+    type: "company",
+    title: "Example Corp",
+    description: "Technology company focused on AI solutions"
+  },
   xAxis,
   yAxis,
   onSubmitRatings,
@@ -103,7 +116,7 @@ const WoxxerFanRating: React.FC<WoxxerFanRatingProps> = ({
   
   const handleSubmit = () => {
     if (ratings.length > 0 && onSubmitRatings) {
-      onSubmitRatings(ratings);
+      onSubmitRatings(ratings, objectBeingRated.id);
       setSubmitted(true);
     }
   };
@@ -284,10 +297,31 @@ const WoxxerFanRating: React.FC<WoxxerFanRatingProps> = ({
                 {renderFanLines()}
               </svg>
               
-              {/* Object to be rated in the center */}
-              <div className="absolute left-1/4 right-1/4 top-1/3 bottom-1/3 flex items-center justify-center">
-                <div className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow-lg text-center border-2 border-gray-300 dark:border-gray-600 max-w-xs">
-                  <p className="text-sm font-medium">{question}</p>
+              {/* Object being rated in the center */}
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <div className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow-lg text-center border-2 border-gray-300 dark:border-gray-600 w-64 z-10">
+                  <div className="mb-2 pb-2 border-b border-gray-200 dark:border-gray-700">
+                    <p className="text-sm font-medium text-gray-700 dark:text-gray-300">{question}</p>
+                  </div>
+                  
+                  <div className="mt-2">
+                    <h3 className="text-base font-medium">{objectBeingRated.title}</h3>
+                    {objectBeingRated.description && (
+                      <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">{objectBeingRated.description}</p>
+                    )}
+                    {objectBeingRated.imageUrl && (
+                      <div className="mt-2 flex justify-center">
+                        <img 
+                          src={objectBeingRated.imageUrl} 
+                          alt={objectBeingRated.title} 
+                          className="h-12 w-auto object-contain"
+                        />
+                      </div>
+                    )}
+                    <div className="text-xs text-gray-500 mt-2 pt-1 border-t border-gray-200 dark:border-gray-700">
+                      {objectBeingRated.type} #{objectBeingRated.id}
+                    </div>
+                  </div>
                 </div>
               </div>
               
