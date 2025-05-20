@@ -61,7 +61,7 @@ const MatrixPage: React.FC = () => {
   
   return (
     <div className="container mx-auto px-4 py-8">
-      <Header />
+      <Header title="Matrix" />
       
       <div className="mb-6">
         <h1 className="text-3xl font-bold">Matrix</h1>

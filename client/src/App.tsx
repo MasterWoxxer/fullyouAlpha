@@ -12,6 +12,7 @@ import ABTesting from "@/pages/ABTesting";
 import Relationship from "@/pages/Relationship";
 import Analytics from "@/pages/Analytics";
 import Settings from "@/pages/Settings";
+import Matrix from "@/pages/Matrix";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -24,6 +25,7 @@ function Router() {
         <Route path="/ab-testing" component={ABTesting} />
         <Route path="/relationship" component={Relationship} />
         <Route path="/analytics" component={Analytics} />
+        <Route path="/matrix" component={Matrix} />
         <Route path="/settings" component={Settings} />
         <Route component={NotFound} />
       </Switch>

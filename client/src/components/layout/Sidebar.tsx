@@ -20,6 +20,7 @@ const Sidebar = () => {
     { path: '/integrations', label: 'Integrations', icon: <IntegrationsIcon className="text-lg" /> },
     { path: '/ab-testing', label: 'A/B Testing', icon: <ABTestingIcon className="text-lg" /> },
     { path: '/relationship', label: 'Relationship', icon: <RelationshipIcon className="text-lg" /> },
+    { path: '/matrix', label: 'Matrix', icon: <AnalyticsIcon className="text-lg" /> },
     { path: '/analytics', label: 'Analytics', icon: <AnalyticsIcon className="text-lg" /> },
     { path: '/settings', label: 'Settings', icon: <SettingsIcon className="text-lg" /> },
   ];
