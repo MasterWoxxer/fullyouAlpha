@@ -55,73 +55,115 @@ const WoxxerFanRating: React.FC<WoxxerFanRatingProps> = ({
     }
   };
   
-  // Draw fan lines for axes
+  // Draw fan lines for axes that more closely match the reference design
   const renderFanLines = () => {
-    const lineCount = 20; // Number of lines in each fan
+    const lineCount = 12; // Fewer, thicker lines
     const lines = [];
     
-    // X-axis fan lines (bottom to center)
+    // Top left to bottom right (growing to shrinking market)
     for (let i = 0; i <= lineCount; i++) {
-      const percentage = (i / lineCount) * 100;
-      const startX = percentage;
-      const startY = 100; // Bottom
-      const endX = 50; // Center point X
-      const endY = 50; // Center point Y
+      // Spacing increases towards the edges
+      const xOffset = (i / lineCount) * 100;
       
       lines.push(
         <line 
           key={`x-line-${i}`} 
-          x1={`${startX}%`} 
-          y1={`${startY}%`} 
-          x2={`${endX}%`} 
-          y2={`${endY}%`} 
+          x1={`${xOffset}%`} 
+          y1="0%" 
+          x2={`${xOffset}%`} 
+          y2="100%" 
           stroke="#888" 
           strokeWidth="1" 
-          strokeOpacity={0.5}
+          strokeOpacity={0.4}
         />
       );
     }
     
-    // Y-axis fan lines (left to center)
+    // Top to bottom (blue ocean to crowded space)
     for (let i = 0; i <= lineCount; i++) {
-      const percentage = (i / lineCount) * 100;
-      const startX = 0; // Left
-      const startY = percentage;
-      const endX = 50; // Center point X
-      const endY = 50; // Center point Y
+      const yOffset = (i / lineCount) * 100;
       
       lines.push(
         <line 
           key={`y-line-${i}`} 
-          x1={`${startX}%`} 
-          y1={`${startY}%`} 
-          x2={`${endX}%`} 
-          y2={`${endY}%`} 
+          x1="0%" 
+          y1={`${yOffset}%`} 
+          x2="100%" 
+          y2={`${yOffset}%`} 
           stroke="#888" 
           strokeWidth="1" 
-          strokeOpacity={0.5}
+          strokeOpacity={0.4}
         />
       );
     }
     
-    // Y-axis fan lines (right to center)
-    for (let i = 0; i <= lineCount; i++) {
-      const percentage = (i / lineCount) * 100;
-      const startX = 100; // Right
-      const startY = percentage;
-      const endX = 50; // Center point X
-      const endY = 50; // Center point Y
-      
+    // Add thicker, fatter fan lines resembling your design (diagonal)
+    const fanLineCount = 12;
+    
+    // Top-Left corner fans (Blue Ocean, Growing Market)
+    for (let i = 1; i <= fanLineCount; i++) {
+      const percentage = (i / fanLineCount) * 30;
       lines.push(
         <line 
-          key={`y2-line-${i}`} 
-          x1={`${startX}%`} 
-          y1={`${startY}%`} 
-          x2={`${endX}%`} 
-          y2={`${endY}%`} 
-          stroke="#888" 
-          strokeWidth="1" 
-          strokeOpacity={0.5}
+          key={`fan-tl-${i}`} 
+          x1="0%" 
+          y1={`${percentage}%`} 
+          x2={`${percentage}%`} 
+          y2="0%" 
+          stroke="#444" 
+          strokeWidth="1.5" 
+          strokeOpacity={0.7}
+        />
+      );
+    }
+    
+    // Bottom-Left corner fans (Crowded Space, Growing Market)
+    for (let i = 1; i <= fanLineCount; i++) {
+      const percentage = (i / fanLineCount) * 30;
+      lines.push(
+        <line 
+          key={`fan-bl-${i}`} 
+          x1="0%" 
+          y1={`${100 - percentage}%`} 
+          x2={`${percentage}%`} 
+          y2="100%" 
+          stroke="#444" 
+          strokeWidth="1.5" 
+          strokeOpacity={0.7}
+        />
+      );
+    }
+    
+    // Top-Right corner fans (Blue Ocean, Shrinking Market)
+    for (let i = 1; i <= fanLineCount; i++) {
+      const percentage = (i / fanLineCount) * 30;
+      lines.push(
+        <line 
+          key={`fan-tr-${i}`} 
+          x1="100%" 
+          y1={`${percentage}%`} 
+          x2={`${100 - percentage}%`} 
+          y2="0%" 
+          stroke="#444" 
+          strokeWidth="1.5" 
+          strokeOpacity={0.7}
+        />
+      );
+    }
+    
+    // Bottom-Right corner fans (Crowded Space, Shrinking Market)
+    for (let i = 1; i <= fanLineCount; i++) {
+      const percentage = (i / fanLineCount) * 30;
+      lines.push(
+        <line 
+          key={`fan-br-${i}`} 
+          x1="100%" 
+          y1={`${100 - percentage}%`} 
+          x2={`${100 - percentage}%`} 
+          y2="100%" 
+          stroke="#444" 
+          strokeWidth="1.5" 
+          strokeOpacity={0.7}
         />
       );
     }
