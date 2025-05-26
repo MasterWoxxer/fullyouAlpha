@@ -1,7 +1,10 @@
 import React, { useState } from 'react';
 import Header from '@/components/layout/Header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import WoxxerFanRating from '@/components/rating/WoxxerFanRating';
+import WoxxerFanRating from "@/components/rating/WoxxerFanRating";
+//export default function FanRating() {
+//  return <WoxxerFanRating />;
+//}
 
 // Sample data for other users' ratings
 const sampleRatings = [
