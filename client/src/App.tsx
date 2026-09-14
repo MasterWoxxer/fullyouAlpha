@@ -14,6 +14,7 @@ import Analytics from "@/pages/Analytics";
 import Settings from "@/pages/Settings";
 import Matrix from "@/pages/Matrix";
 import FanRating from "@/pages/FanRating";
+import WorthIt from "@/pages/WorthIt";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -28,6 +29,7 @@ function Router() {
         <Route path="/analytics" component={Analytics} />
         <Route path="/matrix" component={Matrix} />
         <Route path="/fan-rating" component={FanRating} />
+        <Route path="/worth-it" component={WorthIt} />
         <Route path="/settings" component={Settings} />
         <Route component={NotFound} />
       </Switch>

@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Worth-It Bubble Map</title>
+<!--
+Working copy of docs/worth_it_bubbles_mockup_v6_copilot_handoff.html, wired to real persistence.
+Only focus items + lens ratings are saved server-side (event-sourced). Park state, notes, and
+bubble position are still local-only (localStorage) for this minimal slice — see session plan.
+-->
+<style>
+:root{--bg:#f3f0e9;--panel:#fffdf8;--ink:#171717;--muted:#6f6a62;--line:#cfc8bc}
+*{box-sizing:border-box} body{margin:0;font-family:Inter,system-ui,sans-serif;background:var(--bg);color:var(--ink);overflow:hidden}
+header{min-height:68px;display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--panel);flex-wrap:wrap}
+h1{font-size:17px;margin:0 10px 0 0}.lensBtn,.action{border:1px solid var(--line);background:var(--panel);border-radius:18px;padding:8px 12px;font-size:12px;cursor:pointer}
+.lensBtn.active{background:#171717;color:#fff;border-color:#171717}#lensBar{display:flex;gap:7px;flex-wrap:wrap;flex:1}
+main{display:grid;grid-template-columns:minmax(0,55%) minmax(360px,45%);height:calc(100vh - 90px)}
+#field{position:relative;overflow:hidden;background-image:radial-gradient(#d6d0c6 1px,transparent 1px);background-size:22px 22px;min-width:0}
+#legend{position:absolute;left:14px;bottom:12px;font-size:11px;color:var(--muted);background:rgba(255,253,248,.88);padding:5px 8px;border-radius:10px;z-index:30}
+.bubble{position:absolute;border:1.5px solid #3a3a3a;background:rgba(255,253,248,.96);border-radius:50%;display:flex;align-items:center;justify-content:center;text-align:center;padding:8px;user-select:none;touch-action:none;cursor:grab;font-weight:650;line-height:1.05;font-size:12px;box-shadow:0 2px 7px rgba(0,0,0,.07)}
+.bubble.selected{background:#171717;color:#fff;box-shadow:0 0 0 4px rgba(0,0,0,.12),0 5px 18px rgba(0,0,0,.18);z-index:20}
+.resize{position:absolute;right:-4px;bottom:-4px;width:18px;height:18px;border-radius:50%;background:#fff;border:1.5px solid #171717;cursor:nwse-resize}
+aside{border-left:1px solid var(--line);background:var(--panel);padding:15px;overflow:auto} aside h2{font-size:15px;margin:0 0 4px}
+#park{margin-top:16px;border-top:1px solid var(--line);padding-top:13px}#parkDrop{min-height:90px;border:1.5px dashed var(--line);border-radius:12px;padding:8px;margin-top:7px;background:#f7f4ee;display:flex;flex-wrap:wrap;align-content:flex-start;gap:7px}
+.token{border:1px solid #9d968b;background:#fffdf8;border-radius:18px;padding:7px 9px;font-size:11px;line-height:1.1;cursor:grab;touch-action:none;user-select:none;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+#field.tableTarget{outline:3px dashed #777;outline-offset:-6px}#parkDrop.tableTarget{border-color:#333;background:#eee9df}
+.small{font-size:11px;line-height:1.4;color:var(--muted)} .card{padding:10px 0;border-top:1px solid var(--line)} .card strong{font-size:13px}.value{font-size:11px;color:var(--muted);margin-top:3px}
+textarea,input{width:100%;border:1px solid var(--line);border-radius:8px;padding:8px;background:white}textarea{height:85px;resize:vertical}.controls{display:flex;gap:7px;flex-wrap:wrap;margin-top:12px}
+#onboarding{padding:12px;border:1px solid var(--line);border-radius:12px;background:#f7f4ee;margin-bottom:12px}#onboarding textarea{height:95px;margin-top:8px}
+.userline{font-size:10px;color:var(--muted);white-space:nowrap}
+.status{font-size:11px;color:var(--muted);padding:0 6px}
+@media(max-width:900px){body{overflow:auto}main{grid-template-columns:1fr;height:auto}#field{height:62vh;min-height:480px}aside{border-left:0;border-top:1px solid var(--line)}.resize{width:25px;height:25px;right:-7px;bottom:-7px}.bubble{font-size:11px}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Worth-It map</h1>
+  <div id="lensBar"></div>
+  <div class="userline">user: <span id="userLabel"></span></div>
+  <span class="status" id="status"></span>
+  <button class="action" id="equalize">Equalize this lens</button>
+  <button class="action" id="clear">Clear selection</button>
+</header>
+<main>
+<section id="field"><div id="legend">drag bubble = move • drag little handle = resize current lens (saved) • drag to Park = tuck away (local only)</div></section>
+<aside>
+<div id="onboarding"><strong>What's taking up space in your life?</strong><div class="small">List your projects, jobs, major tasks, or things you're trying to focus on.</div><textarea id="newItems" placeholder="One per line"></textarea><div class="controls"><button class="action" id="addItems">Add to map</button></div></div>
+<h2>Lens: <span id="lensName"></span></h2>
+<div class="small">One metric at a time. Bubble size is the rating and is saved to the server on release. Park position/notes are local to this browser for now.</div>
+<div id="selectedBox"></div>
+<div id="singleEdit" style="display:none;margin-top:12px"><div class="small">Note for selected bubble (local only)</div><textarea id="notes"></textarea><div class="controls"><button class="action" id="saveNote">Save note</button><button class="action" id="deleteItem">Delete bubble</button></div></div>
+<div id="park"><h2>Park</h2><div class="small">Tuck low-attention items here to save space. Drag it back onto the map to bring it into view again.</div><div id="parkDrop"></div></div>
+</aside>
+</main>
+<script>
+const API_BASE = "/api/worth-it";
+const MIN_RATING = 1, MAX_RATING = 10;
+const userId = (new URLSearchParams(location.search).get("userId") || "demo-user").trim();
+document.getElementById("userLabel").textContent = userId;
+
+const localKey = `worthit:local:${userId}`; // park/notes/position only — not synced to server
+const local = JSON.parse(localStorage.getItem(localKey) || "null") || { pos: {}, parked: [], notes: {} };
+function saveLocal() { localStorage.setItem(localKey, JSON.stringify(local)); }
+
+const setStatus = (text) => { document.getElementById("status").textContent = text; };
+
+let lensDefinitions = [];
+let items = []; // {id, title, kind}
+let ratings = {}; // itemId -> lensKey -> value
+let currentLens = null;
+let selected = new Set();
+
+async function loadMap() {
+  setStatus("loading…");
+  const res = await fetch(`${API_BASE}/map?userId=${encodeURIComponent(userId)}`);
+  if (!res.ok) { setStatus("failed to load"); return; }
+  const data = await res.json();
+  lensDefinitions = data.lensDefinitions;
+  items = data.items;
+  ratings = data.ratings || {};
+  currentLens = currentLens || lensDefinitions[0]?.key;
+  setStatus("");
+  renderLensBar();
+  render();
+}
+
+async function createItem(title) {
+  const res = await fetch(`${API_BASE}/items`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userId, title }),
+  });
+  if (!res.ok) { setStatus("failed to add item"); return null; }
+  return res.json();
+}
+
+async function saveRating(focusItemId, lensKey, value) {
+  const res = await fetch(`${API_BASE}/ratings`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userId, focusItemId, lensKey, value, source: "user" }),
+  });
+  if (!res.ok) setStatus("failed to save rating");
+}
+
+async function deleteItem(focusItemId) {
+  const res = await fetch(`${API_BASE}/items/${focusItemId}?userId=${encodeURIComponent(userId)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) { setStatus("failed to delete item"); return false; }
+  return true;
+}
+
+function ratingFor(itemId) {
+  return ratings[itemId]?.[currentLens] ?? 5;
+}
+
+const diameter = (v) => 46 + Math.max(MIN_RATING, Math.min(MAX_RATING, v)) * 9.3;
+
+function renderLensBar() {
+  const bar = document.getElementById("lensBar");
+  bar.innerHTML = "";
+  lensDefinitions.forEach((l) => {
+    const b = document.createElement("button");
+    b.className = "lensBtn" + (l.key === currentLens ? " active" : "");
+    b.textContent = l.label;
+    b.onclick = () => { currentLens = l.key; renderLensBar(); render(); };
+    bar.appendChild(b);
+  });
+  document.getElementById("lensName").textContent =
+    lensDefinitions.find((l) => l.key === currentLens)?.label || "";
+}
+
+function initPositions() {
+  const field = document.getElementById("field");
+  const w = Math.max(field.clientWidth, 700);
+  const active = items.filter((it) => !local.parked.includes(it.id));
+  active.forEach((it, i) => {
+    if (!local.pos[it.id]) {
+      local.pos[it.id] = { x: 25 + (i % 4) * (w - 150) / 4 + (i % 2) * 12, y: 24 + Math.floor(i / 4) * 125 };
+    }
+  });
+}
+
+function renderSelection() {
+  const box = document.getElementById("selectedBox");
+  const singleEdit = document.getElementById("singleEdit");
+  const arr = items.filter((it) => selected.has(it.id));
+  if (!arr.length) {
+    box.innerHTML = '<div class="small" style="margin-top:14px"><em>No active context selected.</em></div>';
+    singleEdit.style.display = "none";
+    return;
+  }
+  const lensLabel = lensDefinitions.find((l) => l.key === currentLens)?.label || "";
+  box.innerHTML = arr.map((it) => `<div class="card"><strong>${it.title}</strong><div class="value">${lensLabel}: ${ratingFor(it.id).toFixed(1)}</div><div class="small" style="margin-top:4px">${local.notes[it.id] || ""}</div></div>`).join("");
+  if (arr.length === 1) {
+    singleEdit.style.display = "block";
+    document.getElementById("notes").value = local.notes[arr[0].id] || "";
+  } else {
+    singleEdit.style.display = "none";
+  }
+}
+
+function render() {
+  initPositions();
+  const field = document.getElementById("field");
+  field.querySelectorAll(".bubble").forEach((x) => x.remove());
+  items.filter((it) => !local.parked.includes(it.id)).forEach((it) => {
+    let d = diameter(ratingFor(it.id));
+    const b = document.createElement("div");
+    b.className = "bubble" + (selected.has(it.id) ? " selected" : "");
+    b.innerHTML = `<span>${it.title}</span><div class="resize"></div>`;
+    b.style.width = d + "px"; b.style.height = d + "px";
+    b.style.left = (local.pos[it.id]?.x || 0) + "px"; b.style.top = (local.pos[it.id]?.y || 0) + "px";
+    const handle = b.querySelector(".resize");
+    let moving = false, moved = false, start = {};
+
+    b.onpointerdown = (e) => {
+      if (e.target === handle) return;
+      moving = true; moved = false;
+      start = { px: e.clientX, py: e.clientY, x: local.pos[it.id].x, y: local.pos[it.id].y };
+      b.setPointerCapture(e.pointerId);
+    };
+    b.onpointermove = (e) => {
+      if (!moving) return;
+      const dx = e.clientX - start.px, dy = e.clientY - start.py;
+      if (Math.abs(dx) + Math.abs(dy) > 3) moved = true;
+      local.pos[it.id].x = Math.max(0, Math.min(field.clientWidth - d, start.x + dx));
+      local.pos[it.id].y = Math.max(0, Math.min(field.clientHeight - d, start.y + dy));
+      b.style.left = local.pos[it.id].x + "px"; b.style.top = local.pos[it.id].y + "px";
+    };
+    b.onpointerup = (e) => {
+      if (moving && moved) {
+        const parkDrop = document.getElementById("parkDrop");
+        const r = parkDrop.getBoundingClientRect();
+        if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom && !local.parked.includes(it.id)) {
+          local.parked.push(it.id); selected.delete(it.id);
+        }
+      } else if (moving && !moved) {
+        selected.has(it.id) ? selected.delete(it.id) : selected.add(it.id);
+      }
+      moving = false; saveLocal(); render();
+    };
+
+    handle.onpointerdown = (e) => {
+      e.stopPropagation();
+      start = { px: e.clientX, py: e.clientY, d, old: ratingFor(it.id) };
+      handle.setPointerCapture(e.pointerId);
+    };
+    handle.onpointermove = (e) => {
+      if (!handle.hasPointerCapture(e.pointerId)) return;
+      const delta = ((e.clientX - start.px) + (e.clientY - start.py)) / 2;
+      const nd = Math.max(55, Math.min(145, start.d + delta));
+      const v = Math.max(MIN_RATING, Math.min(MAX_RATING, (nd - 46) / 9.3));
+      ratings[it.id] ??= {}; ratings[it.id][currentLens] = v;
+      b.style.width = nd + "px"; b.style.height = nd + "px";
+    };
+    handle.onpointerup = () => {
+      const newV = ratingFor(it.id);
+      if (Math.abs(start.old - newV) > 0.01) saveRating(it.id, currentLens, newV);
+      renderSelection();
+    };
+
+    field.appendChild(b);
+  });
+  renderPark();
+  renderSelection();
+}
+
+function renderPark() {
+  const parkDrop = document.getElementById("parkDrop");
+  parkDrop.innerHTML = "";
+  local.parked.forEach((id) => {
+    const it = items.find((x) => x.id === id);
+    if (!it) return;
+    const t = document.createElement("div");
+    t.className = "token"; t.textContent = it.title; t.draggable = true;
+    t.ondragstart = (e) => e.dataTransfer.setData("text/plain", String(id));
+    parkDrop.appendChild(t);
+  });
+}
+
+function unparkAt(id, x, y) {
+  local.parked = local.parked.filter((v) => v !== id);
+  local.pos[id] = { x, y };
+  ratings[id] ??= {}; ratings[id][currentLens] = MIN_RATING;
+  saveRating(id, currentLens, MIN_RATING);
+  saveLocal(); render();
+}
+
+const field = document.getElementById("field");
+const parkDrop = document.getElementById("parkDrop");
+field.ondragover = (e) => { e.preventDefault(); field.classList.add("tableTarget"); };
+field.ondragleave = () => field.classList.remove("tableTarget");
+field.ondrop = (e) => {
+  e.preventDefault(); field.classList.remove("tableTarget");
+  const id = Number(e.dataTransfer.getData("text/plain"));
+  if (items.some((x) => x.id === id)) {
+    const r = field.getBoundingClientRect();
+    unparkAt(id, Math.max(0, e.clientX - r.left - 35), Math.max(0, e.clientY - r.top - 35));
+  }
+};
+parkDrop.ondragover = (e) => { e.preventDefault(); parkDrop.classList.add("tableTarget"); };
+parkDrop.ondragleave = () => parkDrop.classList.remove("tableTarget");
+parkDrop.ondrop = (e) => {
+  e.preventDefault(); parkDrop.classList.remove("tableTarget");
+  const id = Number(e.dataTransfer.getData("text/plain"));
+  if (items.some((x) => x.id === id) && !local.parked.includes(id)) {
+    local.parked.push(id); selected.delete(id); saveLocal(); render();
+  }
+};
+
+document.getElementById("equalize").onclick = async () => {
+  for (const it of items) { ratings[it.id] ??= {}; ratings[it.id][currentLens] = 5; await saveRating(it.id, currentLens, 5); }
+  render();
+};
+document.getElementById("clear").onclick = () => { selected.clear(); render(); };
+document.getElementById("saveNote").onclick = () => {
+  const arr = items.filter((it) => selected.has(it.id));
+  if (arr.length === 1) { local.notes[arr[0].id] = document.getElementById("notes").value; saveLocal(); renderSelection(); }
+};
+document.getElementById("deleteItem").onclick = async () => {
+  const arr = items.filter((it) => selected.has(it.id));
+  if (arr.length !== 1) return;
+  const id = arr[0].id;
+  const ok = await deleteItem(id);
+  if (!ok) return;
+  items = items.filter((it) => it.id !== id);
+  delete ratings[id]; delete local.pos[id]; delete local.notes[id];
+  local.parked = local.parked.filter((v) => v !== id);
+  selected.delete(id);
+  saveLocal(); render();
+};
+const addItemsBtn = document.getElementById("addItems");
+addItemsBtn.onclick = async () => {
+  const el = document.getElementById("newItems");
+  const titles = el.value.split(/\n|,/).map((x) => x.trim()).filter(Boolean);
+  if (!titles.length) return;
+  el.value = "";
+  addItemsBtn.disabled = true;
+  setStatus("adding…");
+  try {
+    for (const title of titles) {
+      if (items.some((x) => x.title.toLowerCase() === title.toLowerCase())) continue;
+      const created = await createItem(title);
+      if (created) items.push(created);
+    }
+  } finally {
+    addItemsBtn.disabled = false;
+    setStatus("");
+  }
+  render();
+};
+
+window.addEventListener("resize", render);
+loadMap();
+</script>
+</body></html>

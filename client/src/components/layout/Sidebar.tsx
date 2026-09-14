@@ -22,6 +22,7 @@ const Sidebar = () => {
     { path: '/relationship', label: 'Relationship', icon: <RelationshipIcon className="text-lg" /> },
     { path: '/matrix', label: 'Matrix', icon: <AnalyticsIcon className="text-lg" /> },
     { path: '/fan-rating', label: 'Fan Rating', icon: <RelationshipIcon className="text-lg" /> },
+    { path: '/worth-it', label: 'Worth-It', icon: <AnalyticsIcon className="text-lg" /> },
     { path: '/analytics', label: 'Analytics', icon: <AnalyticsIcon className="text-lg" /> },
     { path: '/settings', label: 'Settings', icon: <SettingsIcon className="text-lg" /> },
   ];

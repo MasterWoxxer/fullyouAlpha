@@ -10,6 +10,21 @@ import {
   insertCustomerSchema,
   insertCustomerInteractionSchema
 } from "@shared/schema";
+import { getWorthItMap, createFocusItem, appendLensRating, deleteFocusItem } from "./worthItStorage";
+
+const createFocusItemSchema = z.object({
+  userId: z.string().min(1),
+  title: z.string().min(1),
+  kind: z.string().optional(),
+});
+
+const appendLensRatingSchema = z.object({
+  userId: z.string().min(1),
+  focusItemId: z.number(),
+  lensKey: z.string().min(1),
+  value: z.number(),
+  source: z.string().optional(),
+});
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Users routes
@@ -272,6 +287,60 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: "Invalid interaction data", errors: error.errors });
       }
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Worth-It routes (minimal persistent slice: items + event-sourced ratings only)
+  app.get("/api/worth-it/map", async (req, res) => {
+    try {
+      const userId = String(req.query.userId ?? "");
+      if (!userId) {
+        return res.status(400).json({ message: "userId query param is required" });
+      }
+      const map = await getWorthItMap(userId);
+      res.json(map);
+    } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.post("/api/worth-it/items", async (req, res) => {
+    try {
+      const { userId, title, kind } = createFocusItemSchema.parse(req.body);
+      const item = await createFocusItem(userId, title, kind);
+      res.status(201).json(item);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid item data", errors: error.errors });
+      }
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.post("/api/worth-it/ratings", async (req, res) => {
+    try {
+      const { userId, focusItemId, lensKey, value, source } = appendLensRatingSchema.parse(req.body);
+      await appendLensRating(userId, focusItemId, lensKey, value, source);
+      res.status(201).json({ ok: true });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid rating data", errors: error.errors });
+      }
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.delete("/api/worth-it/items/:itemId", async (req, res) => {
+    try {
+      const userId = String(req.query.userId ?? "");
+      const itemId = parseInt(req.params.itemId);
+      if (!userId || Number.isNaN(itemId)) {
+        return res.status(400).json({ message: "userId query param and numeric itemId are required" });
+      }
+      await deleteFocusItem(userId, itemId);
+      res.status(204).send();
+    } catch (error) {
       res.status(500).json({ message: "Internal server error" });
     }
   });

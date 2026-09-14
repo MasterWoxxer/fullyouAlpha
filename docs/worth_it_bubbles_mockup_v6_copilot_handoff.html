@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Worth-It Bubble Map — prototype handoff v6</title>
+<!--
+===============================================================================
+WORTH-IT / FULL YOU — COPILOT HANDOFF CONTRACT (v6)
+===============================================================================
+PURPOSE
+Worth-It is a longitudinal visual map of the things occupying a user's life:
+projects, jobs, major tasks, responsibilities, practices, or things they are
+trying to focus on. The bubble map is a VIEW over persistent user-owned state,
+not the canonical database itself.
+
+IDENTITY
+- Worth-It must use the SAME stable userId as Full You.
+- Never create a separate Worth-It identity namespace for a Full You user.
+- Prototype local fallback: `demo-full-you-user`.
+- Production: userId comes from Full You auth/session context.
+
+CORE PRODUCT RULES
+1. A tracked item is one canonical object regardless of whether it is visible
+   in the main field or parked in the side tray.
+2. "Parked" is PRESENTATION STATE ONLY. It does not mean abandoned, paused,
+   low importance, inactive, or rejected.
+3. Dragging a parked item back into the field sets its rating for the CURRENT
+   lens to the minimum bubble size, because the user is explicitly returning
+   it to visible consideration. Other lens ratings remain untouched.
+4. Bubble size represents one lens at a time. Each lens has an independent
+   rating for each item.
+5. "Motivation / pull today" is state-dependent and should support repeated
+   timestamped observations. Never overwrite history.
+6. Model inference must never silently overwrite user ratings. Provenance must
+   be explicit: user, practitioner, AI inference, import, system.
+7. Unknown historical state remains unknown. Do not reconstruct it as fact.
+8. The database, not the LLM, is canonical. "Don't use intelligence for
+   bookkeeping."
+
+INITIAL ONBOARDING COPY
+"List your projects, jobs, major tasks, or things you're trying to focus on —
+e.g. my job, side hustle, book I'm writing, kids' school, weight management,
+church community, etc."
+
+DESKTOP / RESPONSIVE LAYOUT
+- Desktop: bubble field should occupy roughly HALF the usable width (~55% is
+  fine); controls/detail/park tray use the remainder.
+- Tablet/mobile: optimize separately. Do not merely shrink desktop circles.
+- Phone interactions should eventually support tap/select, drag, and a usable
+  resize gesture/control without relying on tiny handles.
+
+SUGGESTED PRODUCTION DATA MODEL
+(User database examples are conceptual; use relational tables or equivalent.)
+
+User
+  userId: string                 // SAME Full You userId
+  createdAt: ISO timestamp
+  timezone: IANA timezone
+
+FocusItem
+  id: UUID
+  userId: string
+  title: string
+  description?: string
+  kind?: 'project'|'job'|'task'|'responsibility'|'practice'|'goal'|'other'
+  createdAt: ISO timestamp
+  archivedAt?: ISO timestamp     // true archival is separate from parking
+  metadata?: object
+
+LensDefinition
+  key: string
+  label: string
+  minValue: number               // default 1
+  maxValue: number               // default 10
+  cadence?: 'state'|'slow'|'none'
+
+LensRatingEvent                 // APPEND-ONLY history
+  id: UUID
+  userId: string
+  focusItemId: UUID
+  lensKey: string
+  value: number
+  observedAt: ISO timestamp
+  recordedAt: ISO timestamp
+  source: 'user'|'practitioner'|'ai_inference'|'import'|'system'
+  sessionId?: string
+  note?: string
+
+CurrentLensRating               // cache/materialized view, not sole history
+  userId
+  focusItemId
+  lensKey
+  value
+  observedAt
+  source
+
+MapPresentationState
+  userId
+  focusItemId
+  parked: boolean               // presentation only
+  x?: number                    // normalized 0..1 recommended
+  y?: number                    // normalized 0..1 recommended
+  updatedAt: ISO timestamp
+
+FocusItemNoteEvent / Note
+  id: UUID
+  userId
+  focusItemId
+  text
+  visibility: 'private_user'|'shared_with_practitioner'|...
+  source
+  createdAt / updatedAt
+
+OPTIONAL RELATIONSHIPS
+FocusItemRelation
+  parentFocusItemId
+  childFocusItemId
+  relationType: 'parent'|'related'|'depends_on'|...
+Do not force strict folder hierarchy.
+
+MINIMUM API CONTRACT FOR COPILOT
+GET    /api/users/:userId/worth-it/map
+POST   /api/users/:userId/worth-it/items
+PATCH  /api/users/:userId/worth-it/items/:itemId
+POST   /api/users/:userId/worth-it/ratings        // append rating event
+PATCH  /api/users/:userId/worth-it/presentation/:itemId
+GET    /api/users/:userId/worth-it/history?lens=today&from=&to=
+
+Every mutation should return canonical server state/version. Use optimistic UI
+but reconcile against server response. Consider version/etag or updatedAt for
+conflict handling across phone/tablet/desktop.
+
+HISTORY / ANALYTICS REQUIREMENTS
+- Preserve every meaningful rating change with timestamp.
+- Debounce resize events: store final rating at gesture end, not every pixel.
+- Allow optional daily snapshots, but do not manufacture missing ratings.
+- Later analytics can distinguish absolute daily energy from relative project
+  ranking. This matters for globally low-pull days.
+- Store timezone with observations so "today" means the user's local day.
+
+FULL YOU INTEGRATION
+- Auth/session supplies userId.
+- Worth-It may later surface selected state to a practitioner cockpit, but
+  sharing permissions are separate from ownership.
+- Client self-report, practitioner observation, and AI inference are distinct
+  provenance layers. A practitioner cannot overwrite client self-rating.
+
+MIGRATION FROM THIS HTML
+This file still uses localStorage as a demo adapter. Replace `StorageAdapter`
+with API calls while keeping the UI interaction code. The export JSON is a
+bridge for migration/testing, NOT the final persistence architecture.
+===============================================================================
+-->
+<style>
+:root{--bg:#f3f0e9;--panel:#fffdf8;--ink:#171717;--muted:#6f6a62;--line:#cfc8bc}
+*{box-sizing:border-box} body{margin:0;font-family:Inter,system-ui,sans-serif;background:var(--bg);color:var(--ink);overflow:hidden}
+header{min-height:68px;display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--panel);flex-wrap:wrap}
+h1{font-size:17px;margin:0 10px 0 0}.lensBtn,.action{border:1px solid var(--line);background:var(--panel);border-radius:18px;padding:8px 12px;font-size:12px;cursor:pointer}
+.lensBtn.active{background:#171717;color:#fff;border-color:#171717}#lensBar{display:flex;gap:7px;flex-wrap:wrap;flex:1}
+main{display:grid;grid-template-columns:minmax(0,55%) minmax(360px,45%);height:calc(100vh - 90px)}
+#field{position:relative;overflow:hidden;background-image:radial-gradient(#d6d0c6 1px,transparent 1px);background-size:22px 22px;min-width:0}
+#legend{position:absolute;left:14px;bottom:12px;font-size:11px;color:var(--muted);background:rgba(255,253,248,.88);padding:5px 8px;border-radius:10px;z-index:30}
+.bubble{position:absolute;border:1.5px solid #3a3a3a;background:rgba(255,253,248,.96);border-radius:50%;display:flex;align-items:center;justify-content:center;text-align:center;padding:8px;user-select:none;touch-action:none;cursor:grab;font-weight:650;line-height:1.05;font-size:12px;box-shadow:0 2px 7px rgba(0,0,0,.07)}
+.bubble.selected{background:#171717;color:#fff;box-shadow:0 0 0 4px rgba(0,0,0,.12),0 5px 18px rgba(0,0,0,.18);z-index:20}
+.resize{position:absolute;right:-4px;bottom:-4px;width:18px;height:18px;border-radius:50%;background:#fff;border:1.5px solid #171717;cursor:nwse-resize}
+aside{border-left:1px solid var(--line);background:var(--panel);padding:15px;overflow:auto} aside h2{font-size:15px;margin:0 0 4px}
+#park{margin-top:16px;border-top:1px solid var(--line);padding-top:13px}#parkDrop{min-height:90px;border:1.5px dashed var(--line);border-radius:12px;padding:8px;margin-top:7px;background:#f7f4ee;display:flex;flex-wrap:wrap;align-content:flex-start;gap:7px}
+.token{border:1px solid #9d968b;background:#fffdf8;border-radius:18px;padding:7px 9px;font-size:11px;line-height:1.1;cursor:grab;touch-action:none;user-select:none;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+#field.tableTarget{outline:3px dashed #777;outline-offset:-6px}#parkDrop.tableTarget{border-color:#333;background:#eee9df}
+.small{font-size:11px;line-height:1.4;color:var(--muted)} .card{padding:10px 0;border-top:1px solid var(--line)} .card strong{font-size:13px}.value{font-size:11px;color:var(--muted);margin-top:3px}
+textarea,input{width:100%;border:1px solid var(--line);border-radius:8px;padding:8px;background:white}textarea{height:85px;resize:vertical}.controls{display:flex;gap:7px;flex-wrap:wrap;margin-top:12px}
+#onboarding{padding:12px;border:1px solid var(--line);border-radius:12px;background:#f7f4ee;margin-bottom:12px}#onboarding textarea{height:95px;margin-top:8px}
+.devbox{margin-top:18px;border-top:1px solid var(--line);padding-top:13px}.devbox summary{cursor:pointer;font-weight:700;font-size:13px}.devbox pre{white-space:pre-wrap;font-size:10px;line-height:1.35;background:#f4f1eb;padding:9px;border-radius:8px;max-height:330px;overflow:auto}
+.userline{font-size:10px;color:var(--muted);white-space:nowrap}
+@media(max-width:900px){body{overflow:auto}main{grid-template-columns:1fr;height:auto}#field{height:62vh;min-height:480px}aside{border-left:0;border-top:1px solid var(--line)}.resize{width:25px;height:25px;right:-7px;bottom:-7px}.bubble{font-size:11px}}
+</style>
+</head>
+<body>
+<header><h1>Worth-It map</h1><div id="lensBar"></div><div class="userline">Full You user: <span id="userLabel"></span></div><button class="action" id="equalize">Equalize this lens</button><button class="action" id="clear">Clear selection</button></header>
+<main>
+<section id="field"><div id="legend">drag bubble = move • drag little handle = resize current lens • drag to Park = tuck away</div></section>
+<aside>
+<div id="onboarding"><strong>What's taking up space in your life?</strong><div class="small">List your projects, jobs, major tasks, or things you're trying to focus on — e.g. my job, side hustle, book I'm writing, kids' school, weight management, church community, etc.</div><textarea id="newItems" placeholder="One per line"></textarea><div class="controls"><button class="action" id="addItems">Add to map</button></div></div>
+<h2>Lens: <span id="lensName"></span></h2>
+<div class="small">One metric at a time. Bubble size is the rating. Each lens remembers its own relative sizes.</div>
+<div id="selectedBox"></div>
+<div id="singleEdit" style="display:none;margin-top:12px"><div class="small">Current note for selected bubble</div><textarea id="notes"></textarea><div class="controls"><button class="action" id="saveNote">Save note</button></div></div>
+<div id="park"><h2>Park</h2><div class="small">Tuck low-attention items here to save space. Parking does <b>not</b> change what the item is. Drag it back onto the map and it returns at the smallest size for the current lens; its other lens ratings and history stay intact.</div><div id="parkDrop"></div></div>
+<div class="controls"><button class="action" id="exportBtn">Export state + history</button><button class="action" id="resetBtn">Reset demo</button></div>
+<details class="devbox"><summary>Copilot / developer handoff</summary><div class="small">This prototype uses localStorage. Production should replace the storage adapter with Full You auth + API persistence. The full contract is also embedded as a source-code comment at the top of this file.</div><pre id="devText"></pre><div class="controls"><button class="action" id="copyDev">Copy handoff text</button></div></details>
+</aside>
+</main>
+<script>
+const lenses=[
+ {key:"today",label:"Motivation / pull today"},
+ {key:"mission",label:"Importance to mission"},
+ {key:"realMoney",label:"Real money now"},
+ {key:"moneyPotential",label:"Money potential"},
+ {key:"enjoyWork",label:"Enjoy the work"},
+ {key:"goodWorld",label:"Good in the world"},
+ {key:"momentum",label:"External momentum"}
+];
+const projects=[
+ "Full You / Deprescribing","Worth-It Filter","MyCombinator / 100 Bets","Unlock / Eden to Jubilee","Core Inquiry","New Jerusalem Institute",
+ "Soldier Dashboard","Israel Wins","Munitions","Digital Wind","32 Flavors","Bullshit Detector","PTOS","Gone Injun","Tree of Life","MyPeople",
+ "Virginia Billing","Yavin","Lumaterre / Nimbus","Jerusalem Gecko Stickers","Archaic Reactionary Newspaper",
+ "Cloud 9 / Pillow Class","Exposure","Sushiness","Woxxer","Japan Consulting","Thai Massage","Sound Therapy","Hollywood 1948","Fable","Home Free",
+ "Competitive Billionaire Sustainable Mini City","Poches","Size 6","Manhandle / Training Card","Game of Thrones Rewrite"
+];
+
+const notes={
+ "Full You / Deprescribing":"Spec getting close; Paul engaged; micro-investment development bucket.",
+ "Worth-It Filter":"Persistent graphical reasoning environment + chat; micro-investment development bucket.",
+ "MyCombinator / 100 Bets":"Michael + OverWatch; LP pursuit; possible management income.",
+ "Unlock / Eden to Jubilee":"Most mission-important; Core / Break boundary issue active.",
+ "Core Inquiry":"Active inquiry; affects confidence and framing around Unlock.",
+ "New Jerusalem Institute":"Writing / policy / public-intellectual vehicle.",
+ "Soldier Dashboard":"Tech largely ready; operational coordinator bottleneck.",
+ "Israel Wins":"Umbrella for Israel-facing work.","Munitions":"Large-scale strategic project.",
+ "Digital Wind":"Existing company; still possible upside.","32 Flavors":"AI / cognition project; micro-investment development bucket.",
+ "Bullshit Detector":"Working software; micro-investment development bucket.","PTOS":"Almost complete; publication logistics.",
+ "Gone Injun":"Nearly finished manuscript; publication logistics.","Tree of Life":"Workshop / facilitation possibility with Naftali.",
+ "MyPeople":"Low-ask equity participation.","Virginia Billing":"Real current income stream; billing/bookkeeping microbusiness.",
+ "Yavin":"Long-arc teaching / institution-building vision.","Lumaterre / Nimbus":"Current Dubai income.",
+ "Jerusalem Gecko Stickers":"Jerusalem gecko sticker / visual-brand idea; explored design and wholesale production.",
+ "Archaic Reactionary Newspaper":"Newspaper/worldview exercise using an intentionally archaic reactionary lens on current reality.",
+ "Cloud 9 / Pillow Class":"Slow-red-eye / sleep-first airline concept; currently has unusual pull and is being pressure-tested.",
+ "Exposure":"Performer-platform / smart-contract concept; partner path has been paused, but currently being run through Product Market Forge.",
+ "Sushiness":"Longstanding project / concept in the constellation.","Woxxer":"Earlier self-awareness / tracking project related to Full You.",
+ "Japan Consulting":"Japan cybersecurity consulting venture.","Thai Massage":"Practice / training possibility.","Sound Therapy":"1:1 sound-healing / therapy work.",
+ "Hollywood 1948":"Creative project.","Fable":"Sculptural narrative furniture category / marketplace.","Home Free":"World-building / housing concept.",
+ "Competitive Billionaire Sustainable Mini City":"New-city / sustainable world-building concept.","Poches":"Low-activation idea retained in the constellation.",
+ "Size 6":"Low-activation idea retained in the constellation.","Manhandle / Training Card":"Training-card / physical-development concept.",
+ "Game of Thrones Rewrite":"Creative rewrite project."
+};
+
+
+const MIN_RATING=1, MAX_RATING=10;
+const DEFAULT_USER_ID="demo-full-you-user"; // production: inject from Full You auth/session
+const userId=(new URLSearchParams(location.search).get("userId")||DEFAULT_USER_ID).trim();
+document.getElementById("userLabel").textContent=userId;
+const storageKey=`worthit:v6:${userId}`;
+const legacyKey="worthit-lens-v5";
+const now=()=>new Date().toISOString();
+const uid=()=>crypto.randomUUID?crypto.randomUUID():`evt-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+const all5=(names=projects)=>Object.fromEntries(names.map(n=>[n,5]));
+const defaults={
+ today:{...Object.fromEntries(projects.map(n=>[n,5]))},
+ mission:{...all5()},realMoney:{...all5()},moneyPotential:{...all5()},enjoyWork:{...all5()},goodWorld:{...all5()},momentum:{...all5()}
+};
+function freshStore(){return {schemaVersion:6,userId,lens:"today",sizes:structuredClone(defaults),pos:{},selected:[],notes:structuredClone(notes),parked:[],history:[],items:projects.map(title=>({id:uid(),title,createdAt:now(),kind:"project"}))};}
+function migrateLegacy(){const raw=localStorage.getItem(legacyKey);if(!raw)return null;try{const old=JSON.parse(raw);const s=freshStore();s.lens=old.lens||"today";s.sizes=old.sizes||s.sizes;s.pos=old.pos||{};s.selected=old.selected||[];s.notes={...s.notes,...(old.notes||{})};s.parked=[...(old.paused||[])];return s}catch{return null}}
+let store=JSON.parse(localStorage.getItem(storageKey)||"null")||migrateLegacy()||freshStore();
+if(store.userId!==userId) store.userId=userId;
+if(!Array.isArray(store.history))store.history=[];if(!Array.isArray(store.parked))store.parked=[];if(!Array.isArray(store.items))store.items=projects.map(title=>({id:uid(),title,createdAt:now(),kind:"project"}));
+function itemNames(){return store.items.filter(x=>!x.archivedAt).map(x=>x.title)}
+for(const l of lenses){if(!store.sizes[l.key])store.sizes[l.key]={};for(const p of itemNames())if(store.sizes[l.key][p]==null)store.sizes[l.key][p]=5}
+for(const p of itemNames())if(store.notes[p]==null)store.notes[p]="";
+let selected=new Set(store.selected||[]);
+const field=document.getElementById("field"),lensBar=document.getElementById("lensBar"),lensName=document.getElementById("lensName"),selectedBox=document.getElementById("selectedBox"),singleEdit=document.getElementById("singleEdit"),notesEl=document.getElementById("notes"),parkDrop=document.getElementById("parkDrop");
+const diameter=v=>46+Math.max(MIN_RATING,Math.min(MAX_RATING,v))*9.3;
+function event(type,payload={}){store.history.push({id:uid(),userId,type,recordedAt:now(),...payload})}
+function initPositions(){const w=Math.max(field.clientWidth,700);const active=itemNames().filter(p=>!store.parked.includes(p));active.forEach((p,i)=>{if(!store.pos[p])store.pos[p]={x:25+(i%4)*(w-150)/4+(i%2)*12,y:24+Math.floor(i/4)*125}})}
+function save(){store.selected=[...selected];localStorage.setItem(storageKey,JSON.stringify(store))}
+function val(p){return store.sizes[store.lens][p]??5}
+function setRating(p,value,source="user"){const v=Math.max(MIN_RATING,Math.min(MAX_RATING,value));const old=val(p);store.sizes[store.lens][p]=v;if(Math.abs(old-v)>.01)event("lens_rating",{focusItemTitle:p,lensKey:store.lens,oldValue:old,value:v,source,observedAt:now()})}
+function renderSelection(){const arr=itemNames().filter(p=>selected.has(p));if(!arr.length){selectedBox.innerHTML='<div class="small" style="margin-top:14px"><em>No active context selected.</em></div>';singleEdit.style.display="none";return}selectedBox.innerHTML=arr.map(p=>`<div class="card"><strong>${p}</strong><div class="value">${lenses.find(x=>x.key===store.lens).label}: ${val(p).toFixed(1)}</div><div class="small" style="margin-top:4px">${store.notes[p]||""}</div></div>`).join("");if(arr.length===1){singleEdit.style.display="block";notesEl.value=store.notes[arr[0]]||""}else singleEdit.style.display="none"}
+function render(){initPositions();lensName.textContent=lenses.find(x=>x.key===store.lens).label;field.querySelectorAll(".bubble").forEach(x=>x.remove());itemNames().filter(p=>!store.parked.includes(p)).forEach(p=>{let d=diameter(val(p));const b=document.createElement("div");b.className="bubble"+(selected.has(p)?" selected":"");b.innerHTML=`<span>${p}</span><div class="resize"></div>`;b.style.width=d+"px";b.style.height=d+"px";b.style.left=(store.pos[p]?.x||0)+"px";b.style.top=(store.pos[p]?.y||0)+"px";const h=b.querySelector(".resize");let moving=false,moved=false,start={};b.onpointerdown=e=>{if(e.target===h)return;moving=true;moved=false;start={px:e.clientX,py:e.clientY,x:store.pos[p].x,y:store.pos[p].y};b.setPointerCapture(e.pointerId)};b.onpointermove=e=>{if(!moving)return;const dx=e.clientX-start.px,dy=e.clientY-start.py;if(Math.abs(dx)+Math.abs(dy)>3)moved=true;store.pos[p].x=Math.max(0,Math.min(field.clientWidth-d,start.x+dx));store.pos[p].y=Math.max(0,Math.min(field.clientHeight-d,start.y+dy));b.style.left=store.pos[p].x+"px";b.style.top=store.pos[p].y+"px"};b.onpointerup=e=>{if(moving&&moved){const r=parkDrop.getBoundingClientRect();if(e.clientX>=r.left&&e.clientX<=r.right&&e.clientY>=r.top&&e.clientY<=r.bottom&&!store.parked.includes(p)){store.parked.push(p);selected.delete(p);event("presentation_parked",{focusItemTitle:p,parked:true})}}else if(moving&&!moved){selected.has(p)?selected.delete(p):selected.add(p)}moving=false;save();render()};h.onpointerdown=e=>{e.stopPropagation();start={px:e.clientX,py:e.clientY,d,old:val(p)};h.setPointerCapture(e.pointerId)};h.onpointermove=e=>{if(!h.hasPointerCapture(e.pointerId))return;const delta=((e.clientX-start.px)+(e.clientY-start.py))/2;const nd=Math.max(55,Math.min(145,start.d+delta));store.sizes[store.lens][p]=Math.max(MIN_RATING,Math.min(MAX_RATING,(nd-46)/9.3));b.style.width=nd+"px";b.style.height=nd+"px"};h.onpointerup=e=>{const newV=val(p);if(Math.abs(start.old-newV)>.01)event("lens_rating",{focusItemTitle:p,lensKey:store.lens,oldValue:start.old,value:newV,source:"user",observedAt:now()});save();render()};field.appendChild(b)});renderPark();renderSelection()}
+function unparkAt(p,x,y){store.parked=store.parked.filter(v=>v!==p);store.pos[p]={x,y};const old=val(p);store.sizes[store.lens][p]=MIN_RATING;event("presentation_parked",{focusItemTitle:p,parked:false});event("lens_rating",{focusItemTitle:p,lensKey:store.lens,oldValue:old,value:MIN_RATING,source:"system",reason:"unpark_defaults_to_minimum",observedAt:now()});save();render()}
+function renderPark(){parkDrop.innerHTML="";store.parked.filter(p=>itemNames().includes(p)).forEach(p=>{const t=document.createElement("div");t.className="token";t.textContent=p;t.draggable=true;t.ondragstart=e=>e.dataTransfer.setData("text/plain",p);parkDrop.appendChild(t)})}
+field.ondragover=e=>{e.preventDefault();field.classList.add("tableTarget")};field.ondragleave=()=>field.classList.remove("tableTarget");field.ondrop=e=>{e.preventDefault();field.classList.remove("tableTarget");const p=e.dataTransfer.getData("text/plain");if(itemNames().includes(p)){const r=field.getBoundingClientRect();unparkAt(p,Math.max(0,e.clientX-r.left-35),Math.max(0,e.clientY-r.top-35))}};
+parkDrop.ondragover=e=>{e.preventDefault();parkDrop.classList.add("tableTarget")};parkDrop.ondragleave=()=>parkDrop.classList.remove("tableTarget");parkDrop.ondrop=e=>{e.preventDefault();parkDrop.classList.remove("tableTarget");const p=e.dataTransfer.getData("text/plain");if(itemNames().includes(p)&&!store.parked.includes(p)){store.parked.push(p);selected.delete(p);event("presentation_parked",{focusItemTitle:p,parked:true});save();render()}};
+lenses.forEach(l=>{const b=document.createElement("button");b.className="lensBtn"+(l.key===store.lens?" active":"");b.textContent=l.label;b.onclick=()=>{store.lens=l.key;document.querySelectorAll(".lensBtn").forEach(x=>x.classList.remove("active"));b.classList.add("active");save();render()};lensBar.appendChild(b)});
+document.getElementById("equalize").onclick=()=>{itemNames().forEach(p=>setRating(p,5));save();render()};document.getElementById("clear").onclick=()=>{selected.clear();save();render()};document.getElementById("saveNote").onclick=()=>{const arr=itemNames().filter(p=>selected.has(p));if(arr.length===1){store.notes[arr[0]]=notesEl.value;event("note_updated",{focusItemTitle:arr[0],source:"user"});save();renderSelection()}};
+document.getElementById("addItems").onclick=()=>{const el=document.getElementById("newItems");const names=el.value.split(/\n|,/).map(x=>x.trim()).filter(Boolean);for(const title of names){if(itemNames().some(x=>x.toLowerCase()===title.toLowerCase()))continue;store.items.push({id:uid(),title,createdAt:now(),kind:"other"});for(const l of lenses)store.sizes[l.key][title]=5;store.notes[title]="";event("focus_item_created",{focusItemTitle:title,source:"user"})}el.value="";save();render()};
+document.getElementById("resetBtn").onclick=()=>{localStorage.removeItem(storageKey);location.reload()};document.getElementById("exportBtn").onclick=()=>{save();const blob=new Blob([JSON.stringify(store,null,2)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`worth-it-${userId}-state-history.json`;a.click()};
+const handoff=`IDENTITY\nUse the same stable userId as Full You. Worth-It is a module/view over that user's persistent state.\n\nCANONICAL OBJECTS\nFocusItem(id,userId,title,kind,createdAt,archivedAt,metadata)\nLensRatingEvent(id,userId,focusItemId,lensKey,value,observedAt,recordedAt,source,sessionId,note) append-only\nMapPresentationState(userId,focusItemId,parked,x,y,updatedAt)\n\nRULES\nParked is presentation state only; unpark -> minimum CURRENT-lens value, other lenses untouched. Never infer missing historical ratings. Keep provenance separate. Persist final resize gesture as an event. Use normalized x/y for responsive layouts.\n\nAPI\nGET /api/users/:userId/worth-it/map\nPOST /api/users/:userId/worth-it/items\nPATCH /api/users/:userId/worth-it/items/:itemId\nPOST /api/users/:userId/worth-it/ratings\nPATCH /api/users/:userId/worth-it/presentation/:itemId\nGET /api/users/:userId/worth-it/history?lens=today&from=&to=\n\nNEXT BUILD\nReplace localStorage adapter with authenticated backend; add proper mobile/tablet interactions; preserve full timestamped history; add history visualizations only after reliable persistence.`;
+document.getElementById("devText").textContent=handoff;document.getElementById("copyDev").onclick=async()=>{try{await navigator.clipboard.writeText(handoff);document.getElementById("copyDev").textContent="Copied"}catch{alert("Clipboard unavailable; select the handoff text manually.")}};
+window.addEventListener("resize",render);save();render();
+</script>
+</body></html>
