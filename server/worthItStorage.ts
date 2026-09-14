@@ -18,14 +18,35 @@ export interface LensDefinition {
   sort_order: number;
 }
 
+export interface PresentationState {
+  parked: boolean;
+  x: number | null;
+  y: number | null;
+}
+
 export interface WorthItMap {
   items: FocusItem[];
   lensDefinitions: LensDefinition[];
   ratings: Record<number, Record<string, number>>; // focusItemId -> lensKey -> current value
+  presentation: Record<number, PresentationState>; // focusItemId -> park/position state
+}
+
+export async function getPresentationState(userId: string): Promise<Record<number, PresentationState>> {
+  const { data, error } = await supabase
+    .from("map_presentation_state")
+    .select("focus_item_id, parked, x, y")
+    .eq("user_id", userId);
+  if (error) throw error;
+
+  const presentation: Record<number, PresentationState> = {};
+  for (const row of data ?? []) {
+    presentation[row.focus_item_id] = { parked: row.parked, x: row.x, y: row.y };
+  }
+  return presentation;
 }
 
 export async function getWorthItMap(userId: string): Promise<WorthItMap> {
-  const [itemsRes, lensRes, eventsRes] = await Promise.all([
+  const [itemsRes, lensRes, eventsRes, presentation] = await Promise.all([
     supabase
       .from("focus_items")
       .select("*")
@@ -38,6 +59,7 @@ export async function getWorthItMap(userId: string): Promise<WorthItMap> {
       .select("focus_item_id, lens_key, value, observed_at")
       .eq("user_id", userId)
       .order("observed_at", { ascending: true }),
+    getPresentationState(userId),
   ]);
 
   if (itemsRes.error) throw itemsRes.error;
@@ -55,7 +77,35 @@ export async function getWorthItMap(userId: string): Promise<WorthItMap> {
     items: itemsRes.data ?? [],
     lensDefinitions: lensRes.data ?? [],
     ratings,
+    presentation,
   };
+}
+
+export async function upsertPresentationState(
+  userId: string,
+  focusItemId: number,
+  patch: { parked?: boolean; x?: number; y?: number },
+): Promise<void> {
+  const existing = await supabase
+    .from("map_presentation_state")
+    .select("parked, x, y")
+    .eq("user_id", userId)
+    .eq("focus_item_id", focusItemId)
+    .maybeSingle();
+  if (existing.error) throw existing.error;
+
+  const { error } = await supabase.from("map_presentation_state").upsert(
+    {
+      user_id: userId,
+      focus_item_id: focusItemId,
+      parked: patch.parked ?? existing.data?.parked ?? false,
+      x: patch.x ?? existing.data?.x ?? null,
+      y: patch.y ?? existing.data?.y ?? null,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "user_id,focus_item_id" },
+  );
+  if (error) throw error;
 }
 
 export async function createFocusItem(
@@ -100,6 +150,13 @@ export async function deleteFocusItem(userId: string, focusItemId: number): Prom
     .eq("user_id", userId)
     .eq("focus_item_id", focusItemId);
   if (ratingsDelete.error) throw ratingsDelete.error;
+
+  const presentationDelete = await supabase
+    .from("map_presentation_state")
+    .delete()
+    .eq("user_id", userId)
+    .eq("focus_item_id", focusItemId);
+  if (presentationDelete.error) throw presentationDelete.error;
 
   const itemDelete = await supabase
     .from("focus_items")

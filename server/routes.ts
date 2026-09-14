@@ -10,7 +10,7 @@ import {
   insertCustomerSchema,
   insertCustomerInteractionSchema
 } from "@shared/schema";
-import { getWorthItMap, createFocusItem, appendLensRating, deleteFocusItem } from "./worthItStorage";
+import { getWorthItMap, createFocusItem, appendLensRating, deleteFocusItem, upsertPresentationState } from "./worthItStorage";
 
 const createFocusItemSchema = z.object({
   userId: z.string().min(1),
@@ -24,6 +24,13 @@ const appendLensRatingSchema = z.object({
   lensKey: z.string().min(1),
   value: z.number(),
   source: z.string().optional(),
+});
+
+const upsertPresentationSchema = z.object({
+  userId: z.string().min(1),
+  parked: z.boolean().optional(),
+  x: z.number().optional(),
+  y: z.number().optional(),
 });
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -341,6 +348,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await deleteFocusItem(userId, itemId);
       res.status(204).send();
     } catch (error) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.patch("/api/worth-it/presentation/:itemId", async (req, res) => {
+    try {
+      const itemId = parseInt(req.params.itemId);
+      if (Number.isNaN(itemId)) {
+        return res.status(400).json({ message: "numeric itemId is required" });
+      }
+      const { userId, ...patch } = upsertPresentationSchema.parse(req.body);
+      await upsertPresentationState(userId, itemId, patch);
+      res.status(200).json({ ok: true });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid presentation data", errors: error.errors });
+      }
       res.status(500).json({ message: "Internal server error" });
     }
   });

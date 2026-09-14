@@ -5,8 +5,8 @@
 <title>Worth-It Bubble Map</title>
 <!--
 Working copy of docs/worth_it_bubbles_mockup_v6_copilot_handoff.html, wired to real persistence.
-Only focus items + lens ratings are saved server-side (event-sourced). Park state, notes, and
-bubble position are still local-only (localStorage) for this minimal slice — see session plan.
+Focus items, lens ratings, and park/position (map_presentation_state) are saved server-side.
+Notes are still local-only (localStorage) for this minimal slice — see session plan.
 -->
 <style>
 :root{--bg:#f3f0e9;--panel:#fffdf8;--ink:#171717;--muted:#6f6a62;--line:#cfc8bc}
@@ -19,10 +19,11 @@ main{display:grid;grid-template-columns:minmax(0,55%) minmax(360px,45%);height:c
 #legend{position:absolute;left:14px;bottom:12px;font-size:11px;color:var(--muted);background:rgba(255,253,248,.88);padding:5px 8px;border-radius:10px;z-index:30}
 .bubble{position:absolute;border:1.5px solid #3a3a3a;background:rgba(255,253,248,.96);border-radius:50%;display:flex;align-items:center;justify-content:center;text-align:center;padding:8px;user-select:none;touch-action:none;cursor:grab;font-weight:650;line-height:1.05;font-size:12px;box-shadow:0 2px 7px rgba(0,0,0,.07)}
 .bubble.selected{background:#171717;color:#fff;box-shadow:0 0 0 4px rgba(0,0,0,.12),0 5px 18px rgba(0,0,0,.18);z-index:20}
+.bubble.dragging{cursor:grabbing;box-shadow:0 8px 22px rgba(0,0,0,.25);z-index:1000}
+.bubble.parked{position:static;width:64px!important;height:64px!important;font-size:10.5px;box-shadow:0 1px 3px rgba(0,0,0,.05)}
 .resize{position:absolute;right:-4px;bottom:-4px;width:18px;height:18px;border-radius:50%;background:#fff;border:1.5px solid #171717;cursor:nwse-resize}
 aside{border-left:1px solid var(--line);background:var(--panel);padding:15px;overflow:auto} aside h2{font-size:15px;margin:0 0 4px}
 #park{margin-top:16px;border-top:1px solid var(--line);padding-top:13px}#parkDrop{min-height:90px;border:1.5px dashed var(--line);border-radius:12px;padding:8px;margin-top:7px;background:#f7f4ee;display:flex;flex-wrap:wrap;align-content:flex-start;gap:7px}
-.token{border:1px solid #9d968b;background:#fffdf8;border-radius:18px;padding:7px 9px;font-size:11px;line-height:1.1;cursor:grab;touch-action:none;user-select:none;box-shadow:0 1px 3px rgba(0,0,0,.05)}
 #field.tableTarget{outline:3px dashed #777;outline-offset:-6px}#parkDrop.tableTarget{border-color:#333;background:#eee9df}
 .small{font-size:11px;line-height:1.4;color:var(--muted)} .card{padding:10px 0;border-top:1px solid var(--line)} .card strong{font-size:13px}.value{font-size:11px;color:var(--muted);margin-top:3px}
 textarea,input{width:100%;border:1px solid var(--line);border-radius:8px;padding:8px;background:white}textarea{height:85px;resize:vertical}.controls{display:flex;gap:7px;flex-wrap:wrap;margin-top:12px}
@@ -42,11 +43,11 @@ textarea,input{width:100%;border:1px solid var(--line);border-radius:8px;padding
   <button class="action" id="clear">Clear selection</button>
 </header>
 <main>
-<section id="field"><div id="legend">drag bubble = move • drag little handle = resize current lens (saved) • drag to Park = tuck away (local only)</div></section>
+<section id="field"><div id="legend">drag bubble = move • drag little handle = resize current lens (saved) • drag a bubble onto Park to tuck it away, drag it back onto the map to bring it back (saved)</div></section>
 <aside>
 <div id="onboarding"><strong>What's taking up space in your life?</strong><div class="small">List your projects, jobs, major tasks, or things you're trying to focus on.</div><textarea id="newItems" placeholder="One per line"></textarea><div class="controls"><button class="action" id="addItems">Add to map</button></div></div>
 <h2>Lens: <span id="lensName"></span></h2>
-<div class="small">One metric at a time. Bubble size is the rating and is saved to the server on release. Park position/notes are local to this browser for now.</div>
+<div class="small">One metric at a time. Bubble size is the rating, and park/position, are all saved to the server. Notes are local to this browser for now.</div>
 <div id="selectedBox"></div>
 <div id="singleEdit" style="display:none;margin-top:12px"><div class="small">Note for selected bubble (local only)</div><textarea id="notes"></textarea><div class="controls"><button class="action" id="saveNote">Save note</button><button class="action" id="deleteItem">Delete bubble</button></div></div>
 <div id="park"><h2>Park</h2><div class="small">Tuck low-attention items here to save space. Drag it back onto the map to bring it into view again.</div><div id="parkDrop"></div></div>
@@ -58,7 +59,7 @@ const MIN_RATING = 1, MAX_RATING = 10;
 const userId = (new URLSearchParams(location.search).get("userId") || "demo-user").trim();
 document.getElementById("userLabel").textContent = userId;
 
-const localKey = `worthit:local:${userId}`; // park/notes/position only — not synced to server
+const localKey = `worthit:local:${userId}`; // notes only now — park/position live server-side (see presentation API)
 const local = JSON.parse(localStorage.getItem(localKey) || "null") || { pos: {}, parked: [], notes: {} };
 function saveLocal() { localStorage.setItem(localKey, JSON.stringify(local)); }
 
@@ -79,9 +80,42 @@ async function loadMap() {
   items = data.items;
   ratings = data.ratings || {};
   currentLens = currentLens || lensDefinitions[0]?.key;
+  mergePresentation(data.presentation || {});
   setStatus("");
   renderLensBar();
   render();
+}
+
+// Park/position are now stored server-side (survive across browsers/devices). Any state that only
+// exists in this browser's older localStorage cache (from before that existed) is adopted once here.
+function mergePresentation(serverPresentation) {
+  const legacyParked = new Set(local.parked);
+  const legacyPos = { ...local.pos };
+  local.parked = [];
+  for (const it of items) {
+    const server = serverPresentation[it.id];
+    if (server) {
+      if (server.parked) local.parked.push(it.id);
+      if (server.x != null && server.y != null) local.pos[it.id] = { x: server.x, y: server.y };
+    } else if (legacyParked.has(it.id) || legacyPos[it.id]) {
+      const parked = legacyParked.has(it.id);
+      if (parked) local.parked.push(it.id);
+      if (legacyPos[it.id]) local.pos[it.id] = legacyPos[it.id];
+      savePresentation(it.id, { parked, x: legacyPos[it.id]?.x, y: legacyPos[it.id]?.y });
+    }
+  }
+  saveLocal();
+}
+
+async function savePresentation(focusItemId, patch) {
+  // keepalive lets park/move requests finish even if the tab navigates/refreshes right after
+  const res = await fetch(`${API_BASE}/presentation/${focusItemId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userId, ...patch }),
+    keepalive: true,
+  });
+  if (!res.ok) setStatus("failed to save park/position");
 }
 
 async function createItem(title) {
@@ -95,10 +129,12 @@ async function createItem(title) {
 }
 
 async function saveRating(focusItemId, lensKey, value) {
+  // keepalive lets the request finish even if the tab navigates/refreshes right after a resize
   const res = await fetch(`${API_BASE}/ratings`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ userId, focusItemId, lensKey, value, source: "user" }),
+    keepalive: true,
   });
   if (!res.ok) setStatus("failed to save rating");
 }
@@ -133,11 +169,23 @@ function renderLensBar() {
 
 function initPositions() {
   const field = document.getElementById("field");
+  const bubbleW = 150, bubbleH = 120;
   const w = Math.max(field.clientWidth, 700);
+  const h = Math.max(field.clientHeight, 400);
+  const cols = Math.max(2, Math.floor(w / bubbleW));
+  const rows = Math.max(2, Math.floor(h / bubbleH));
   const active = items.filter((it) => !local.parked.includes(it.id));
   active.forEach((it, i) => {
     if (!local.pos[it.id]) {
-      local.pos[it.id] = { x: 25 + (i % 4) * (w - 150) / 4 + (i % 2) * 12, y: 24 + Math.floor(i / 4) * 125 };
+      // wrap into a grid that always fits the visible field, however many items there are,
+      // so a newly added bubble is never placed off-screen and unreachable
+      const slot = i % (cols * rows);
+      const col = slot % cols, row = Math.floor(slot / cols);
+      const stack = Math.floor(i / (cols * rows)) * 16;
+      local.pos[it.id] = {
+        x: Math.min(w - bubbleW, 20 + col * ((w - bubbleW - 20) / (cols - 1 || 1)) + stack),
+        y: Math.min(h - bubbleH, 20 + row * ((h - bubbleH - 20) / (rows - 1 || 1)) + stack),
+      };
     }
   });
 }
@@ -161,47 +209,96 @@ function renderSelection() {
   }
 }
 
-function render() {
-  initPositions();
-  const field = document.getElementById("field");
-  field.querySelectorAll(".bubble").forEach((x) => x.remove());
-  items.filter((it) => !local.parked.includes(it.id)).forEach((it) => {
-    let d = diameter(ratingFor(it.id));
-    const b = document.createElement("div");
-    b.className = "bubble" + (selected.has(it.id) ? " selected" : "");
-    b.innerHTML = `<span>${it.title}</span><div class="resize"></div>`;
+const field = document.getElementById("field");
+const parkDrop = document.getElementById("parkDrop");
+
+function pointInRect(x, y, r) {
+  return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+}
+
+function updateDropHighlight(x, y) {
+  field.classList.toggle("tableTarget", pointInRect(x, y, field.getBoundingClientRect()));
+  parkDrop.classList.toggle("tableTarget", pointInRect(x, y, parkDrop.getBoundingClientRect()));
+}
+
+function clearDropHighlight() {
+  field.classList.remove("tableTarget");
+  parkDrop.classList.remove("tableTarget");
+}
+
+// One bubble is the same object whether it's on the field or tucked in Park —
+// dragging it across either boundary just moves it between the two states.
+function makeBubble(it, isParked) {
+  const d = isParked ? 64 : diameter(ratingFor(it.id));
+  const b = document.createElement("div");
+  b.className = "bubble" + (selected.has(it.id) ? " selected" : "") + (isParked ? " parked" : "");
+  b.innerHTML = `<span>${it.title}</span>` + (isParked ? "" : '<div class="resize"></div>');
+  if (!isParked) {
     b.style.width = d + "px"; b.style.height = d + "px";
     b.style.left = (local.pos[it.id]?.x || 0) + "px"; b.style.top = (local.pos[it.id]?.y || 0) + "px";
-    const handle = b.querySelector(".resize");
-    let moving = false, moved = false, start = {};
+  }
+  const handle = b.querySelector(".resize");
+  let dragging = false, moved = false, start = {};
 
-    b.onpointerdown = (e) => {
-      if (e.target === handle) return;
-      moving = true; moved = false;
-      start = { px: e.clientX, py: e.clientY, x: local.pos[it.id].x, y: local.pos[it.id].y };
-      b.setPointerCapture(e.pointerId);
-    };
-    b.onpointermove = (e) => {
-      if (!moving) return;
-      const dx = e.clientX - start.px, dy = e.clientY - start.py;
-      if (Math.abs(dx) + Math.abs(dy) > 3) moved = true;
-      local.pos[it.id].x = Math.max(0, Math.min(field.clientWidth - d, start.x + dx));
-      local.pos[it.id].y = Math.max(0, Math.min(field.clientHeight - d, start.y + dy));
-      b.style.left = local.pos[it.id].x + "px"; b.style.top = local.pos[it.id].y + "px";
-    };
-    b.onpointerup = (e) => {
-      if (moving && moved) {
-        const parkDrop = document.getElementById("parkDrop");
-        const r = parkDrop.getBoundingClientRect();
-        if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom && !local.parked.includes(it.id)) {
+  b.onpointerdown = (e) => {
+    if (e.target === handle) return;
+    dragging = true; moved = false;
+    start = { px: e.clientX, py: e.clientY, rect: b.getBoundingClientRect() };
+    b.setPointerCapture(e.pointerId);
+  };
+  b.onpointermove = (e) => {
+    if (!dragging) return;
+    const dx = e.clientX - start.px, dy = e.clientY - start.py;
+    if (!moved && Math.abs(dx) + Math.abs(dy) > 3) {
+      moved = true;
+      // switch to fixed positioning (viewport coords) so it can cross field/park without
+      // reparenting — moving a node with active pointer capture cancels the drag in some browsers
+      b.classList.add("dragging");
+      b.style.position = "fixed";
+      b.style.width = start.rect.width + "px"; b.style.height = start.rect.height + "px";
+      b.style.left = start.rect.left + "px"; b.style.top = start.rect.top + "px";
+    }
+    if (moved) {
+      b.style.left = (start.rect.left + dx) + "px";
+      b.style.top = (start.rect.top + dy) + "px";
+      updateDropHighlight(e.clientX, e.clientY);
+    }
+  };
+  b.onpointerup = (e) => {
+    if (!dragging) return;
+    dragging = false;
+    clearDropHighlight();
+    if (moved) {
+      const overPark = pointInRect(e.clientX, e.clientY, parkDrop.getBoundingClientRect());
+      const overField = pointInRect(e.clientX, e.clientY, field.getBoundingClientRect());
+      if (overPark) {
+        if (!local.parked.includes(it.id)) {
           local.parked.push(it.id); selected.delete(it.id);
+          savePresentation(it.id, { parked: true });
         }
-      } else if (moving && !moved) {
-        selected.has(it.id) ? selected.delete(it.id) : selected.add(it.id);
+      } else if (overField) {
+        const wasParked = local.parked.includes(it.id);
+        const r = field.getBoundingClientRect();
+        const nx = Math.max(0, Math.min(r.width - d, e.clientX - r.left - d / 2));
+        const ny = Math.max(0, Math.min(r.height - d, e.clientY - r.top - d / 2));
+        local.pos[it.id] = { x: nx, y: ny };
+        if (wasParked) {
+          local.parked = local.parked.filter((v) => v !== it.id);
+          ratings[it.id] ??= {}; ratings[it.id][currentLens] = MIN_RATING;
+          saveRating(it.id, currentLens, MIN_RATING);
+          savePresentation(it.id, { parked: false, x: nx, y: ny });
+        } else {
+          savePresentation(it.id, { x: nx, y: ny });
+        }
       }
-      moving = false; saveLocal(); render();
-    };
+      // dropped somewhere else on the page (e.g. over the aside text): snap back, no state change
+    } else {
+      selected.has(it.id) ? selected.delete(it.id) : selected.add(it.id);
+    }
+    saveLocal(); render();
+  };
 
+  if (handle) {
     handle.onpointerdown = (e) => {
       e.stopPropagation();
       start = { px: e.clientX, py: e.clientY, d, old: ratingFor(it.id) };
@@ -220,55 +317,29 @@ function render() {
       if (Math.abs(start.old - newV) > 0.01) saveRating(it.id, currentLens, newV);
       renderSelection();
     };
+  }
 
-    field.appendChild(b);
+  return b;
+}
+
+function render() {
+  initPositions();
+  field.querySelectorAll(".bubble").forEach((x) => x.remove());
+  items.filter((it) => !local.parked.includes(it.id)).forEach((it) => {
+    field.appendChild(makeBubble(it, false));
   });
   renderPark();
   renderSelection();
 }
 
 function renderPark() {
-  const parkDrop = document.getElementById("parkDrop");
-  parkDrop.innerHTML = "";
+  parkDrop.querySelectorAll(".bubble").forEach((x) => x.remove());
   local.parked.forEach((id) => {
     const it = items.find((x) => x.id === id);
     if (!it) return;
-    const t = document.createElement("div");
-    t.className = "token"; t.textContent = it.title; t.draggable = true;
-    t.ondragstart = (e) => e.dataTransfer.setData("text/plain", String(id));
-    parkDrop.appendChild(t);
+    parkDrop.appendChild(makeBubble(it, true));
   });
 }
-
-function unparkAt(id, x, y) {
-  local.parked = local.parked.filter((v) => v !== id);
-  local.pos[id] = { x, y };
-  ratings[id] ??= {}; ratings[id][currentLens] = MIN_RATING;
-  saveRating(id, currentLens, MIN_RATING);
-  saveLocal(); render();
-}
-
-const field = document.getElementById("field");
-const parkDrop = document.getElementById("parkDrop");
-field.ondragover = (e) => { e.preventDefault(); field.classList.add("tableTarget"); };
-field.ondragleave = () => field.classList.remove("tableTarget");
-field.ondrop = (e) => {
-  e.preventDefault(); field.classList.remove("tableTarget");
-  const id = Number(e.dataTransfer.getData("text/plain"));
-  if (items.some((x) => x.id === id)) {
-    const r = field.getBoundingClientRect();
-    unparkAt(id, Math.max(0, e.clientX - r.left - 35), Math.max(0, e.clientY - r.top - 35));
-  }
-};
-parkDrop.ondragover = (e) => { e.preventDefault(); parkDrop.classList.add("tableTarget"); };
-parkDrop.ondragleave = () => parkDrop.classList.remove("tableTarget");
-parkDrop.ondrop = (e) => {
-  e.preventDefault(); parkDrop.classList.remove("tableTarget");
-  const id = Number(e.dataTransfer.getData("text/plain"));
-  if (items.some((x) => x.id === id) && !local.parked.includes(id)) {
-    local.parked.push(id); selected.delete(id); saveLocal(); render();
-  }
-};
 
 document.getElementById("equalize").onclick = async () => {
   for (const it of items) { ratings[it.id] ??= {}; ratings[it.id][currentLens] = 5; await saveRating(it.id, currentLens, 5); }
